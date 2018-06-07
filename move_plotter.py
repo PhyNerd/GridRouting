@@ -4,6 +4,7 @@ from matplotlib import pyplot as plt
 import numpy as np
 from matplotlib import animation
 from matplotlib.animation import FFMpegWriter
+import numbers
 
 class MovePlotter(object):
     def __init__(self):
@@ -52,7 +53,7 @@ class MovePlotter(object):
                 text.set_text('{}ms'.format(n / samplerate * 1e3))
             return point
 
-        ani = animation.FuncAnimation(fig, update_point, len(x) / speed+1, fargs=(x, y, z, point), interval=1)
+        ani = animation.FuncAnimation(fig, update_point, int(len(x) / speed+1), fargs=(x, y, z, point), interval=50)
         plt.show()
         #writer = FFMpegWriter(fps=10)
         #ani.save('im.mp4', writer=writer)
@@ -75,7 +76,7 @@ class MovePlotter(object):
         return ramps
 
     def create_voltage_ramps(self, grid):
-        moves_list = self.mover.find_route(grid.copy(), self.res_grid)
+        moves_list = self.mover.find_route(grid.copy(), self.res_grid, trivial_movement=True)
         ramps = []
         for from_node, to_node, int_ramps in moves_list:
             # calculate and append new ramp for later concatenation
@@ -88,9 +89,9 @@ class MovePlotter(object):
             total_len = np.sum([len(rampe) for rampe in ramps])
             row_from, col_from = from_node
             row_to, col_to = to_node
-            if isinstance(row_from, int) and isinstance(col_from, int):
+            if isinstance(row_from, numbers.Integral) and isinstance(col_from, numbers.Integral):
                 grid[row_from, col_from] = 0
-            if isinstance(row_to, int) and isinstance(col_to, int):
+            if isinstance(row_to, numbers.Integral) and isinstance(col_to, numbers.Integral):
                 grid[row_to, col_to] = 1
             self.grids += [(total_len, grid.copy())]
             # DEBUG
@@ -128,10 +129,21 @@ class MovePlotter(object):
 
 
 if __name__ == '__main__':
-    res_grid = np.pad(np.ones((7, 7)), ((2, 2), (2, 2)), 'constant', constant_values=(0))
+    res_grid = np.zeros((11, 11))
+    res_grid[2:8, 2:8] = 1
     controler = MovePlotter()
     ramp_speed = 1000 # nodes /s
     amplitude = 5
     samplerate = 1e5
-    grid = np.random.randint(2, size=(11, 11))
+    grid = np.array([[ 0,  0,  1,  0,  0,  1,  0,  0,  0,  1,  1,],
+    [ 0,  0,  0,  0,  1,  1,  0,  0,  0,  0,  0,],
+ [ 0,  0,  1,  0,  1,  0,  1,  0,  1,  0,  0,],
+ [ 1,  1,  0,  1,  1,  1,  1,  0,  0,  1,  1,],
+ [ 1,  0,  1,  0,  1,  0,  1,  0,  1,  1,  0,],
+ [ 0,  1,  1,  0,  1,  1,  0,  1,  1,  1,  1,],
+ [ 0,  1,  1,  1,  1,  1,  0,  0,  1,  1,  1,],
+ [ 0,  0,  1,  0,  1,  0,  0,  0,  1,  0,  1,],
+ [ 0,  0,  1,  1,  0,  0,  1,  0,  0,  0,  0,],
+ [ 0,  1,  0,  1,  0,  1,  0,  1,  0,  1,  0,],
+ [ 0,  0,  1,  0,  0,  0,  0,  0,  0,  0,  0,]])
     controler.plot(grid, res_grid, ramp_speed, amplitude)

@@ -1,5 +1,6 @@
 import numpy as np
 from scipy.ndimage import center_of_mass
+import numbers
 DEBUG = False
 
 
@@ -17,9 +18,9 @@ class GridMover(object):
             if from_node != to_node:
                 row_from, col_from = from_node
                 row_to, col_to = to_node
-                if isinstance(row_from, int) and isinstance(col_from, int):
+                if isinstance(row_from, numbers.Integral) and isinstance(col_from, numbers.Integral):
                     grid[row_from, col_from] = 0
-                if isinstance(row_to, int) and isinstance(col_to, int):
+                if isinstance(row_to, numbers.Integral) and isinstance(col_to, numbers.Integral):
                     grid[row_to, col_to] = 1
                 moves += [[from_node, to_node, 0b00]]
                 from_node = to_node
@@ -28,51 +29,14 @@ class GridMover(object):
         # add falling intensity ramp to last move
         moves[-1][2] = moves[-1][2] | 0b10
 
-        return moves
+        return moves, grid
 
-    def calc_move_trivial(self, from_node, to_node, grid):
-        """
-        Calculate the moves that need to be made to move from_node to to_node
-        without moving along grid lines.
-        """
-        row_from, col_from = from_node
-        row_to, col_to = to_node
-
-        # What directions are we moving in
-        move_left = (col_to <= col_from)
-        move_up = (row_to <= row_from)
-
-        nodes = []
-
-        path1_horizontal = grid[row_from, col_to:col_from] if move_left else grid[row_from, col_from + 1:col_to + 1]
-        path1_vertical = grid[row_to:row_from, col_to] if move_up else grid[row_from + 1:row_to + 1, col_to]
-        path1_obstacles = sum(path1_horizontal) + sum(path1_vertical)  # horizontal movement first
-
-        # Path 2: horizontal movement first
-        path2_vertical = grid[row_to:row_from, col_from] if move_up else grid[row_from + 1:row_to + 1, col_from]
-        path2_horizontal = grid[row_to, col_to:col_from] if move_left else grid[row_to, col_from + 1:col_to + 1]
-        path2_obstacles = sum(path2_vertical) + sum(path2_horizontal)
-
-        if path1_obstacles == 0:
-            nodes += [(row_from, col_to)]
-        elif path2_obstacles == 0:
-            nodes += [(row_to, col_from)]
-        else:
-            row_modifier = -0.5 if move_up else 0.5
-            col_modifier = -0.5 if move_left else 0.5
-            nodes += [(row_from + row_modifier, col_from + col_modifier)]
-            nodes += [(row_to - row_modifier, col_from + col_modifier)]
-            nodes += [(row_to - row_modifier, col_to - col_modifier)]
-        nodes += [to_node]
-
-        return self.perform_moves(from_node, nodes, grid)
-
-    def calc_move(self, from_node, to_node, grid):
+    def calc_move(self, from_node, to_node, grid, trivial_movement=False):
         """
         Calculate the moves that need to be made to move a from_node to to_node.
-        If there are obstacles in the way move them instead and fill their place after.
+        Trivial movement: move around obstacles
+        Normal movement: If there are obstacles in the way move them instead and fill their place after.
         """
-        moves = []
         row_from, col_from = from_node
         row_to, col_to = to_node
 
@@ -92,56 +56,82 @@ class GridMover(object):
         path2_horizontal = grid[row_to, col_to:col_from] if move_left else grid[row_to, col_from + 1:col_to + 1]
         path2_obstacles = sum(path2_vertical) + sum(path2_horizontal)
 
-        vertical_first = path1_obstacles <= path2_obstacles  # move vertically first if this isn't inferior to horizontal fist
-
-        if vertical_first:
-            pause_node = (row_from, col_to)
-            horizontal_path = path1_horizontal
-            vertical_path = path1_vertical
-
-            if any(horizontal_path):
-                # obstacle in the horizontal path
-                # move it to the destination insted then move to it's position
-                first_obstacle = np.argwhere(horizontal_path)[-1, 0] if move_left else np.argwhere(horizontal_path)[0, 0] + 1
-                obstacle_node = (row_from, first_obstacle + min(col_to, col_from))
-                moves += self.calc_move(obstacle_node, to_node, grid)
-                moves += self.perform_moves(from_node, [obstacle_node], grid)
-            elif any(vertical_path):
-                # obstacle in the vertical path
-                # move it to the destination insted then move to it's position
-                first_obstacle = np.argwhere(vertical_path)[-1, 0] if move_up else np.argwhere(vertical_path)[0, 0] + 1
-                obstacle_node = (first_obstacle + min(row_to, row_from), col_to)
-                moves += self.calc_move(obstacle_node, to_node, grid)
-                moves += self.perform_moves(from_node, [pause_node, obstacle_node], grid)
+        if trivial_movement:
+            nodes = []
+            if path1_obstacles == 0:
+                nodes += [(row_from, col_to)]
+            elif path2_obstacles == 0:
+                nodes += [(row_to, col_from)]
             else:
-                # no obstacles
-                # move to the destination
-                moves += self.perform_moves(from_node, [pause_node, to_node], grid)
+                row_modifier = -0.5 if move_up else 0.5
+                col_modifier = -0.5 if move_left else 0.5
+                nodes += [(row_from + row_modifier, col_from + col_modifier)]
+                nodes += [(row_to - row_modifier, col_from + col_modifier)]
+                nodes += [(row_to - row_modifier, col_to - col_modifier)]
+            nodes += [to_node]
+
+            moves, grid = self.perform_moves(from_node, nodes, grid)
         else:
-            pause_node = (row_to, col_from)
-            horizontal_path = path2_horizontal
-            vertical_path = path2_vertical
+            moves = []
+            vertical_first = path1_obstacles <= path2_obstacles  # move vertically first if this isn't inferior to horizontal fist
+            if vertical_first:
+                pause_node = (row_from, col_to)
+                horizontal_path = path1_horizontal
+                vertical_path = path1_vertical
 
-            if any(vertical_path):
-                # obstacle in the vertical path
-                # move it to the destination insted then move to it's position
-                first_obstacle = np.argwhere(vertical_path)[-1, 0] if move_up else np.argwhere(vertical_path)[0, 0] + 1
-                obstacle_node = (first_obstacle + min(row_to, row_from), col_from)
-                moves += self.calc_move(obstacle_node, to_node, grid)
-                moves += self.perform_moves(from_node, [obstacle_node], grid)
-            elif any(horizontal_path):
-                # obstacle in the horizontal path
-                # move it to the destination insted then move to it's position
-                first_obstacle = np.argwhere(horizontal_path)[-1, 0] if move_left else np.argwhere(horizontal_path)[0, 0] + 1
-                obstacle_node = (row_to, first_obstacle + min(col_to, col_from))
-                moves += self.calc_move(obstacle_node, to_node, grid)
-                moves += self.perform_moves(from_node, [pause_node, obstacle_node], grid)
+                if any(horizontal_path):
+                    # obstacle in the horizontal path
+                    # move it to the destination insted then move to it's position
+                    first_obstacle = np.argwhere(horizontal_path)[-1, 0] if move_left else np.argwhere(horizontal_path)[0, 0] + 1
+                    obstacle_node = (row_from, first_obstacle + min(col_to, col_from))
+                    move_list, grid = self.calc_move(obstacle_node, to_node, grid)
+                    moves += move_list
+                    move_list, grid = self.perform_moves(from_node, [obstacle_node], grid)
+                    moves += move_list
+                elif any(vertical_path):
+                    # obstacle in the vertical path
+                    # move it to the destination insted then move to it's position
+                    first_obstacle = np.argwhere(vertical_path)[-1, 0] if move_up else np.argwhere(vertical_path)[0, 0] + 1
+                    obstacle_node = (first_obstacle + min(row_to, row_from), col_to)
+                    move_list, grid = self.calc_move(obstacle_node, to_node, grid)
+                    moves += move_list
+                    move_list, grid = self.perform_moves(from_node, [pause_node, obstacle_node], grid)
+                    moves += move_list
+                else:
+                    # no obstacles
+                    # move to the destination
+                    move_list, grid = self.perform_moves(from_node, [pause_node, to_node], grid)
+                    moves += move_list
             else:
-                # no obstacles
-                # move to the destination
-                moves += self.perform_moves(from_node, [pause_node, to_node], grid)
+                pause_node = (row_to, col_from)
+                horizontal_path = path2_horizontal
+                vertical_path = path2_vertical
 
-        return moves
+                if any(vertical_path):
+                    # obstacle in the vertical path
+                    # move it to the destination insted then move to it's position
+                    first_obstacle = np.argwhere(vertical_path)[-1, 0] if move_up else np.argwhere(vertical_path)[0, 0] + 1
+                    obstacle_node = (first_obstacle + min(row_to, row_from), col_from)
+                    move_list, grid = self.calc_move(obstacle_node, to_node, grid)
+                    moves += move_list
+                    move_list, grid = self.perform_moves(from_node, [obstacle_node], grid)
+                    moves += move_list
+                elif any(horizontal_path):
+                    # obstacle in the horizontal path
+                    # move it to the destination insted then move to it's position
+                    first_obstacle = np.argwhere(horizontal_path)[-1, 0] if move_left else np.argwhere(horizontal_path)[0, 0] + 1
+                    obstacle_node = (row_to, first_obstacle + min(col_to, col_from))
+                    move_list, grid = self.calc_move(obstacle_node, to_node, grid)
+                    moves += move_list
+                    move_list, grid = self.perform_moves(from_node, [pause_node, obstacle_node], grid)
+                    moves += move_list
+                else:
+                    # no obstacles
+                    # move to the destination
+                    move_list, grid = self.perform_moves(from_node, [pause_node, to_node], grid)
+                    moves += move_list
+
+        return moves, grid
 
     def get_distances(self, node, nodes):
         nodes = np.array(nodes)
@@ -158,19 +148,32 @@ class GridMover(object):
         Calculate what nodes to move where in start_grid to fill all
         nodes that are filled in res_grid.
         """
-        to_route = []
-        diffgrid = start_grid - res_grid
+        modified_res_grid = np.clip(res_grid, 0, None)
+        diffgrid = start_grid - modified_res_grid
         to_empty = np.argwhere(diffgrid == 1).tolist()  # find filled spots in reservoir
-        to_fill = np.argwhere(diffgrid == -1)  # find empty pots in main grid
-        to_fill = to_fill[np.argsort(self.get_distances(list(map(int, center_of_mass(res_grid))), to_fill))]  # reorder around center of mass to reduce moves
-        for node in to_fill:
-            nearest_node_index = self.get_closest_node_index(node, to_empty)
-            nearest_node = to_empty.pop(nearest_node_index)
-            to_route.append((tuple(nearest_node), tuple(node)))
-            if len(to_empty) < 1:
-                break
+        to_fill = np.argwhere(diffgrid == -1)  # find empty spots in main grid
 
-        return to_route
+        # create routes
+        to_route = []
+        center_mass = list(map(int, center_of_mass(modified_res_grid)))
+        if len(to_fill) > 0:
+            to_fill = to_fill[np.argsort(self.get_distances(center_mass, to_fill))]  # reorder around center of mass to reduce moves
+            for node in to_fill:
+                if len(to_empty) < 1:
+                    break
+                nearest_node_index = self.get_closest_node_index(node, to_empty)
+                nearest_node = to_empty.pop(nearest_node_index)
+                to_route.append((tuple(nearest_node), tuple(node)))
+
+        # create the moves that remove excess atoms
+        instant_moves = []
+        for node in to_empty:
+            if res_grid[node[0], node[1]] == -1:
+                row_dir = -0.5 if center_mass[0] >= node[0] else 0.5
+                col_dir = -0.5 if center_mass[1] >= node[1] else 0.5
+                instant_moves.append((node, (node[0] + row_dir, node[1] + col_dir), 0b01))
+
+        return to_route, instant_moves
 
     def find_route(self, start_grid, res_grid, trivial_movement=False):
         """
@@ -178,14 +181,12 @@ class GridMover(object):
         all filled nodes from res_grid.
         """
         grid = np.asarray(start_grid) if not isinstance(start_grid, np.ndarray) else start_grid.copy()
-        paths = self.find_paths(grid, res_grid)
+        paths, instant_moves = self.find_paths(grid, res_grid)
         moves = []
 
         for from_node, to_node in paths:
-            if trivial_movement:
-                moves += self.calc_move_trivial(from_node, to_node, grid)
-            else:
-                moves += self.calc_move(from_node, to_node, grid)
+            move_list, grid = self.calc_move(from_node, to_node, grid,  trivial_movement=trivial_movement)
+            moves += move_list
 
         # remove unneeded intensity lowering/raising
         for i, (from_node, to_node, ramps) in enumerate(moves[:-1]):
@@ -193,6 +194,9 @@ class GridMover(object):
             if to_node == next_from_node and bool(moves[i + 1][2] & 0b01):
                 moves[i][2] = moves[i][2] & 0b01
                 moves[i + 1][2] = moves[i + 1][2] & 0b10
+
+        # add annihilate moves
+        moves += instant_moves
 
         if DEBUG:
             if np.sum(grid) != np.sum(start_grid):
